@@ -23,7 +23,7 @@ class HomePage extends StatelessWidget {
       body: Stack(
         children: [
           // 背景修饰
-          Container(color: Colors.blue.withOpacity(0.05)),
+          Container(color: Colors.blue.withValues(alpha: 0.4)),
           Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -41,7 +41,7 @@ class HomePage extends StatelessWidget {
                 const SizedBox(height: 50),
                 // 模拟拍照按钮
                 GestureDetector(
-                  onTap: () => print("准备打开相机..."),
+                  onTap: () => debugPrint("准备打开相机..."),
                   child: Container(
                     width: 120,
                     height: 120,
@@ -50,7 +50,7 @@ class HomePage extends StatelessWidget {
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.blue.withOpacity(0.3),
+                          color: Colors.blueAccent.withValues(alpha: 0.8),
                           blurRadius: 20,
                           spreadRadius: 5,
                         ),
