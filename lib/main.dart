@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mathmate/recognizer_page.dart';
 
 void main() => runApp(const MathMateApp());
 
@@ -17,31 +18,40 @@ class MathMateApp extends StatelessWidget {
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
+  void _openRecognizerPage(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const RecognizerPage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          // 背景修饰
-          Container(color: Colors.blue.withValues(alpha: 0.4)),
+          Container(color: Colors.blue.withValues(alpha: 0.1)),
           Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Text(
-                  "MathMate",
-                  style: TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue,
+                // 结果显示区
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: const Text(
+                    '拍一下，难题秒解决',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blueGrey,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 10),
-                const Text("拍一下，难题秒解决", style: TextStyle(color: Colors.grey)),
                 const SizedBox(height: 50),
-                // 模拟拍照按钮
+
+                // 拍照按钮
                 GestureDetector(
-                  onTap: () => debugPrint("准备打开相机..."),
+                  onTap: () => _openRecognizerPage(context),
                   child: Container(
                     width: 120,
                     height: 120,
@@ -50,7 +60,7 @@ class HomePage extends StatelessWidget {
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.blueAccent.withValues(alpha: 0.8),
+                          color: Colors.blueAccent.withValues(alpha: 0.5),
                           blurRadius: 20,
                           spreadRadius: 5,
                         ),
