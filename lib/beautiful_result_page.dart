@@ -8,6 +8,7 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:mathmate/math_recognizer.dart';
+import 'package:mathmate/visualization/response_extractor.dart';
 import 'package:mathmate/visualization/geometry_validator.dart';
 import 'package:mathmate/visualization/jxg_webview.dart';
 import 'package:open_file/open_file.dart';
@@ -66,7 +67,10 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
         return;
       }
 
-      final List<String> lines = result
+      final ExtractedResponse extracted = ResponseExtractor.split(result);
+      final String cleanFormulaText = extracted.cleanFormulaText;
+
+      final List<String> lines = cleanFormulaText
           .split('\n')
           .map((String line) => line.trim())
           .where((String line) => line.isNotEmpty)
@@ -85,19 +89,26 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
 
       _latex = _formulaLines.isNotEmpty ? _formulaLines.first : null;
 
-      final Map<String, dynamic>? extractedScene = _tryExtractGeometryScene(
-        result,
-      );
-
-      if (extractedScene != null) {
-        final GeometryValidationResult validation =
-            const GeometryValidator().validate(extractedScene);
-        if (validation.isValid && validation.scene != null) {
-          _geometryScene = validation.scene!.toJson();
-          _geometryMessage = null;
-        } else {
+      if (extracted.geometryJsonText != null) {
+        try {
+          final dynamic rawJson = jsonDecode(extracted.geometryJsonText!);
+          if (rawJson is! Map<String, dynamic>) {
+            _geometryScene = null;
+            _geometryMessage = 'GeometryJSON 格式错误：根节点必须是对象。';
+          } else {
+            final GeometryValidationResult validation =
+                const GeometryValidator().validate(rawJson);
+            if (validation.isValid && validation.scene != null) {
+              _geometryScene = validation.scene!.toJson();
+              _geometryMessage = null;
+            } else {
+              _geometryScene = null;
+              _geometryMessage = validation.error;
+            }
+          }
+        } catch (e) {
           _geometryScene = null;
-          _geometryMessage = validation.error;
+          _geometryMessage = 'GeometryJSON 解析失败：$e';
         }
       } else {
         _geometryScene = null;
@@ -125,47 +136,6 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
         text.contains('^') ||
         text.contains('{') ||
         text.contains('}');
-  }
-
-  Map<String, dynamic>? _tryExtractGeometryScene(String payload) {
-    final RegExp blockPattern = RegExp(
-      r'```(?:geometryjson|json)?\s*([\s\S]*?)```',
-      caseSensitive: false,
-    );
-    final Iterable<RegExpMatch> matches = blockPattern.allMatches(payload);
-
-    for (final RegExpMatch match in matches) {
-      final String candidate = (match.group(1) ?? '').trim();
-      final Map<String, dynamic>? decoded = _tryDecodeMap(candidate);
-      if (_isGeometryScene(decoded)) {
-        return decoded;
-      }
-    }
-
-    final Map<String, dynamic>? wholeDecoded = _tryDecodeMap(payload.trim());
-    if (_isGeometryScene(wholeDecoded)) {
-      return wholeDecoded;
-    }
-    return null;
-  }
-
-  Map<String, dynamic>? _tryDecodeMap(String value) {
-    try {
-      final dynamic decoded = jsonDecode(value);
-      if (decoded is Map<String, dynamic>) {
-        return decoded;
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
-  bool _isGeometryScene(Map<String, dynamic>? data) {
-    if (data == null) {
-      return false;
-    }
-    return data.containsKey('viewport') && data.containsKey('elements');
   }
 
   Future<Uint8List> _sharpenImage(Uint8List originalBytes) async {
@@ -199,9 +169,9 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
 
       if (kIsWeb) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Web端暂不支持PDF导出')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Web端暂不支持PDF导出')));
         }
         return;
       }

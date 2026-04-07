@@ -1,4 +1,5 @@
 import 'package:mathmate/visualization/geometry_models.dart';
+import 'package:mathmate/visualization/safe_json_parser.dart';
 
 class GeometryValidationResult {
   final bool isValid;
@@ -24,11 +25,23 @@ class GeometryValidator {
         );
       }
 
-      final GeometryScene scene = GeometryScene.fromJson(json);
+      final SafeJsonParser parser = const SafeJsonParser();
+      final GeometryScene scene = GeometryScene.fromJson(json, parser: parser);
       if (scene.elements.isEmpty) {
         return const GeometryValidationResult(
           isValid: false,
           error: 'GeometryJSON elements can not be empty.',
+        );
+      }
+
+      final bool hasBadElement = scene.elements.any(
+        (GeometryElement element) =>
+            element.id == 'unknown' || element.type == 'unknown',
+      );
+      if (hasBadElement) {
+        return const GeometryValidationResult(
+          isValid: false,
+          error: 'GeometryJSON contains elements with missing id/type.',
         );
       }
 

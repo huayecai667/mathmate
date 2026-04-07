@@ -1,8 +1,11 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:mathmate/math_recognizer.dart';
+import 'package:mathmate/visualization/geometry_validator.dart';
+import 'package:mathmate/visualization/response_extractor.dart';
 
 class ResultPage extends StatefulWidget {
   final XFile image; // 接收传递过来的图片
@@ -15,7 +18,9 @@ class ResultPage extends StatefulWidget {
 
 class _ResultPageState extends State<ResultPage> {
   final MathRecognizer _recognizer = MathRecognizer();
-  String? _latex;
+  String? _fullResponse;
+  String _cleanFormulaText = '';
+  String? _geometryMessage;
   bool _isAnalyzing = true;
 
   @override
@@ -26,13 +31,49 @@ class _ResultPageState extends State<ResultPage> {
 
   // 页面初始化后立即开始识别
   Future<void> _startRecognition() async {
-    final result = await _recognizer.recognizeFromImage(widget.image);
+    final String? result = await _recognizer.recognizeFromImage(widget.image);
+
+    String cleanFormulaText = '';
+    String? geometryMessage;
+
+    if (result != null && result.trim().isNotEmpty) {
+      final ExtractedResponse extracted = ResponseExtractor.split(result);
+      cleanFormulaText = extracted.cleanFormulaText;
+
+      if (extracted.geometryJsonText != null) {
+        try {
+          final dynamic decoded = jsonDecode(extracted.geometryJsonText!);
+          if (decoded is Map<String, dynamic>) {
+            final GeometryValidationResult validation =
+                const GeometryValidator().validate(decoded);
+            if (!validation.isValid) {
+              geometryMessage = validation.error;
+            }
+          } else {
+            geometryMessage = 'GeometryJSON 格式错误：根节点必须是对象。';
+          }
+        } catch (e) {
+          geometryMessage = 'GeometryJSON 解析失败：$e';
+        }
+      }
+    }
+
     if (mounted) {
       setState(() {
-        _latex = result;
+        _fullResponse = result;
+        _cleanFormulaText = cleanFormulaText;
+        _geometryMessage = geometryMessage;
         _isAnalyzing = false;
       });
     }
+  }
+
+  bool _looksLikeFormula(String text) {
+    return text.contains(r'\') ||
+        text.contains('_') ||
+        text.contains('^') ||
+        text.contains('{') ||
+        text.contains('}');
   }
 
   @override
@@ -57,14 +98,22 @@ class _ResultPageState extends State<ResultPage> {
                 : Column(
                     children: [
                       const Text("识别结果 (LaTeX):"),
-                      SelectableText(_latex ?? "识别失败"),
+                      SelectableText(_fullResponse ?? "识别失败"),
                       const Divider(),
-                      if (_latex != null)
+                      if (_cleanFormulaText.isNotEmpty &&
+                          _looksLikeFormula(_cleanFormulaText))
                         Math.tex(
-                          _latex!,
+                          _cleanFormulaText,
                           mathStyle: MathStyle.display, // 推荐加上，公式更美观
                           textStyle: const TextStyle(fontSize: 24), // 在这里设置字号
                         ),
+                      if (_geometryMessage != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _geometryMessage!,
+                          style: const TextStyle(color: Colors.blueGrey),
+                        ),
+                      ],
                     ],
                   ),
           ),

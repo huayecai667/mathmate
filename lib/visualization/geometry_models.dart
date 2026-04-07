@@ -1,3 +1,5 @@
+import 'package:mathmate/visualization/safe_json_parser.dart';
+
 class Viewport {
   final double xMin;
   final double xMax;
@@ -11,12 +13,15 @@ class Viewport {
     required this.yMax,
   });
 
-  factory Viewport.fromJson(Map<String, dynamic> json) {
+  factory Viewport.fromJson(
+    Map<String, dynamic> json, {
+    required SafeJsonParser parser,
+  }) {
     return Viewport(
-      xMin: (json['xMin'] as num).toDouble(),
-      xMax: (json['xMax'] as num).toDouble(),
-      yMin: (json['yMin'] as num).toDouble(),
-      yMax: (json['yMax'] as num).toDouble(),
+      xMin: parser.safeToDouble(json['xMin'], -5),
+      xMax: parser.safeToDouble(json['xMax'], 5),
+      yMin: parser.safeToDouble(json['yMin'], -5),
+      yMax: parser.safeToDouble(json['yMax'], 5),
     );
   }
 
@@ -35,14 +40,64 @@ class GeometryElement {
   final String type;
   final Map<String, dynamic> raw;
 
-  const GeometryElement({required this.id, required this.type, required this.raw});
+  const GeometryElement({
+    required this.id,
+    required this.type,
+    required this.raw,
+  });
 
-  factory GeometryElement.fromJson(Map<String, dynamic> json) {
+  factory GeometryElement.fromJson(
+    Map<String, dynamic> json, {
+    required SafeJsonParser parser,
+  }) {
+    final Map<String, dynamic> raw = parser.safeMap(json);
+    final String type = parser.safeString(raw['type'], 'unknown');
+    final String id = parser.safeString(raw['id'], 'unknown');
+
+    _normalizeByType(raw, type, parser);
+
     return GeometryElement(
-      id: json['id'] as String,
-      type: json['type'] as String,
-      raw: json,
+      id: id,
+      type: type,
+      raw: raw,
     );
+  }
+
+  static void _normalizeByType(
+    Map<String, dynamic> raw,
+    String type,
+    SafeJsonParser parser,
+  ) {
+    if (raw.containsKey('offset')) {
+      raw['offset'] = parser.safePoint(raw['offset']);
+    }
+
+    if (type == 'point') {
+      raw['pos'] = parser.safePoint(raw['pos']);
+      raw['label'] = parser.safeString(raw['label'], raw['id']?.toString() ?? '');
+      return;
+    }
+
+    if (type == 'line') {
+      raw['p1'] = parser.safeString(raw['p1']);
+      raw['p2'] = parser.safeString(raw['p2']);
+      return;
+    }
+
+    if (type == 'circle') {
+      raw['center'] = parser.safePoint(raw['center']);
+      raw['radius'] = parser.safeToDouble(raw['radius'], 1.0);
+      return;
+    }
+
+    if (type == 'dynamic_point') {
+      raw['targetId'] = parser.safeString(raw['targetId']);
+      raw['initialT'] = parser.safeToDouble(raw['initialT'], 0.25);
+      if (raw.containsKey('pos')) {
+        raw['pos'] = parser.safePoint(raw['pos']);
+      }
+      raw['label'] = parser.safeString(raw['label'], raw['id']?.toString() ?? '');
+    }
   }
 
   Map<String, dynamic> toJson() => raw;
@@ -54,12 +109,24 @@ class GeometryScene {
 
   const GeometryScene({required this.viewport, required this.elements});
 
-  factory GeometryScene.fromJson(Map<String, dynamic> json) {
-    final List<dynamic> rawElements = json['elements'] as List<dynamic>;
+  factory GeometryScene.fromJson(
+    Map<String, dynamic> json, {
+    required SafeJsonParser parser,
+  }) {
+    final Map<String, dynamic> safeJson = parser.safeMap(json);
+    final List<dynamic> rawElements = parser.safeList(safeJson['elements']);
     return GeometryScene(
-      viewport: Viewport.fromJson(json['viewport'] as Map<String, dynamic>),
+      viewport: Viewport.fromJson(
+        parser.safeMap(safeJson['viewport']),
+        parser: parser,
+      ),
       elements: rawElements
-          .map((dynamic item) => GeometryElement.fromJson(item as Map<String, dynamic>))
+          .map(
+            (dynamic item) => GeometryElement.fromJson(
+              parser.safeMap(item),
+              parser: parser,
+            ),
+          )
           .toList(),
     );
   }
