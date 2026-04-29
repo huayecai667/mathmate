@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mathmate/about_mathmate_page.dart';
 import 'package:mathmate/account_settings_page.dart';
+import 'package:mathmate/grade_selection_page.dart';
 import 'package:mathmate/help_support_page.dart';
 import 'package:mathmate/history_list_page.dart';
 
@@ -12,9 +13,14 @@ const Color _profileCardShadowColor = Color(0x12000000);
 const double _profileCardRadius = 12;
 const double _profileCardElevationBlur = 10;
 
-class ProfilePage extends StatelessWidget {
+class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
 
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -57,6 +63,22 @@ class ProfilePage extends StatelessWidget {
                           builder: (_) => const AccountSettingsPage(),
                         ),
                       );
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  _MenuCard(
+                    icon: Icons.school_outlined,
+                    title: '更换年级',
+                    onTap: () async {
+                      final int? result = await Navigator.of(context).push<int>(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              const GradeSelectionPage(isFromSettings: true),
+                        ),
+                      );
+                      if (result != null && mounted) {
+                        setState(() {});
+                      }
                     },
                   ),
                   const SizedBox(height: 10),
@@ -137,11 +159,6 @@ class ProfilePage extends StatelessWidget {
             height: 92,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                colors: <Color>[Color(0xFF556EEA), Color(0xFF3F51B5)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
               boxShadow: <BoxShadow>[
                 BoxShadow(
                   color: _profilePrimaryColor.withValues(alpha: 0.28),
@@ -150,14 +167,12 @@ class ProfilePage extends StatelessWidget {
                 ),
               ],
             ),
-            child: const Center(
-              child: Text(
-                'M+',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 30,
-                  fontWeight: FontWeight.w800,
-                ),
+            child: const ClipOval(
+              child: Image(
+                image: AssetImage('assets/app_icon_final.png'),
+                width: 92,
+                height: 92,
+                fit: BoxFit.cover,
               ),
             ),
           ),
@@ -223,10 +238,7 @@ class _MenuCard extends StatelessWidget {
                   ),
                 ),
               ),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: Color(0xFFB3BCCB),
-              ),
+              const Icon(Icons.chevron_right_rounded, color: Color(0xFFB3BCCB)),
             ],
           ),
         ),

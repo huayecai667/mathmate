@@ -2,8 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mathmate/data/history_models.dart';
@@ -64,11 +64,20 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
   }
 
   Future<void> _loadImageBytes() async {
-    _imageBytes = await widget.image.readAsBytes();
-    if (!mounted) {
-      return;
+    try {
+      if (!await widget.image.exists()) {
+        debugPrint('Image file does not exist: ${widget.image.path}');
+        return;
+      }
+      _imageBytes = await widget.image.readAsBytes();
+      if (!mounted) {
+        return;
+      }
+      setState(() {});
+    } catch (e, stack) {
+      debugPrint('Error loading image bytes: $e');
+      debugPrint('$stack');
     }
-    setState(() {});
   }
 
   Future<void> _runPipeline() async {
@@ -78,50 +87,61 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
       _stageErrors = <String>[];
     });
 
-    final PipelineResult result = await _pipelineService.runFromImage(
-      XFile(widget.image.path),
-      onStageChanged: (PipelineStage stage) {
-        if (!mounted) {
-          return;
-        }
+    try {
+      final PipelineResult result = await _pipelineService.runFromImage(
+        XFile(widget.image.path),
+        onStageChanged: (PipelineStage stage) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _statusMessage = _messageForStage(stage);
+          });
+        },
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      final String questionMarkdown =
+          result.recognize?.questionMarkdown.trim() ?? '';
+      final String solutionMarkdown =
+          result.solve?.solutionMarkdown.trim() ?? '';
+      final String formulaPreview = _extractFormulaPreview(
+        '$questionMarkdown\n$solutionMarkdown',
+      );
+      final String cleanedLatex = _cleanLatex(formulaPreview);
+
+      final VisualizeResult? visualize = result.visualize;
+      final String? geometryMessage = visualize?.scene != null
+          ? null
+          : visualize?.error ?? '当前未生成可视化数据。';
+
+      setState(() {
+        _isAnalyzing = false;
+        _questionMarkdown = questionMarkdown;
+        _solutionMarkdown = solutionMarkdown;
+        _formulaPreview = cleanedLatex.isEmpty ? null : cleanedLatex;
+        _geometryScene = visualize?.scene;
+        _geometryMessage = geometryMessage;
+        _stageErrors = List<String>.from(result.stageErrors);
+        _statusMessage = _stageErrors.isEmpty ? '处理完成' : '部分阶段失败，请检查下方提示';
+      });
+
+      if (result.recognize != null) {
+        _persistHistoryAsync();
+      }
+    } catch (e, stack) {
+      debugPrint('Pipeline error: $e');
+      debugPrint('$stack');
+      if (mounted) {
         setState(() {
-          _statusMessage = _messageForStage(stage);
+          _isAnalyzing = false;
+          _statusMessage = '处理出错: $e';
+          _stageErrors = <String>['系统错误: ${e.toString()}'];
         });
-      },
-    );
-
-    if (!mounted) {
-      return;
-    }
-
-    final String questionMarkdown =
-        result.recognize?.questionMarkdown.trim() ?? '';
-    final String solutionMarkdown = result.solve?.solutionMarkdown.trim() ?? '';
-    final String formulaPreview = _extractFormulaPreview(
-      '$questionMarkdown\n$solutionMarkdown',
-    );
-    final String cleanedLatex = _cleanLatex(formulaPreview);
-
-    final VisualizeResult? visualize = result.visualize;
-    final String? geometryMessage = visualize?.scene != null
-        ? null
-        : visualize?.error ?? '当前未生成可视化数据。';
-
-    setState(() {
-      _isAnalyzing = false;
-      _questionMarkdown = questionMarkdown;
-      _solutionMarkdown = solutionMarkdown;
-      _formulaPreview = cleanedLatex.isEmpty ? null : cleanedLatex;
-      _geometryScene = visualize?.scene;
-      _geometryMessage = geometryMessage;
-      _stageErrors = List<String>.from(result.stageErrors);
-      _statusMessage = _stageErrors.isEmpty
-          ? '处理完成'
-          : '部分阶段失败，请检查下方提示';
-    });
-
-    if (result.recognize != null) {
-      _persistHistoryAsync();
+      }
     }
   }
 
@@ -141,8 +161,8 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
     Map<String, dynamic>? validatedScene;
     String? geometryMessage;
     if (normalizedScene != null) {
-      final GeometryValidationResult validation =
-          const GeometryValidator().validate(normalizedScene);
+      final GeometryValidationResult validation = const GeometryValidator()
+          .validate(normalizedScene);
       if (validation.isValid && validation.scene != null) {
         validatedScene = validation.scene!.toJson();
       } else {
@@ -157,8 +177,8 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
       _solutionMarkdown = history.solutionMarkdown;
       _formulaPreview = cleanedLatex.isEmpty ? null : cleanedLatex;
       _geometryScene = validatedScene;
-      _geometryMessage = geometryMessage ??
-          (_geometryScene == null ? '历史记录中无可视化数据。' : null);
+      _geometryMessage =
+          geometryMessage ?? (_geometryScene == null ? '历史记录中无可视化数据。' : null);
       _stageErrors = <String>[];
     });
   }
@@ -307,6 +327,10 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
 
   Future<void> _exportPdf() async {
     try {
+      // Load Chinese font
+      final ByteData fontData = await rootBundle.load('assets/fonts/simhei.ttf');
+      final pw.Font font = pw.Font.ttf(fontData);
+
       final pw.Document pdf = pw.Document();
 
       pdf.addPage(
@@ -321,6 +345,7 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
                   style: pw.TextStyle(
                     fontSize: 24,
                     fontWeight: pw.FontWeight.bold,
+                    font: font,
                   ),
                 ),
               ),
@@ -328,19 +353,20 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
               pw.Header(
                 level: 1,
                 child: pw.Text(
-                  '题目内容（OCR）',
+                  '题目内容',
                   style: pw.TextStyle(
                     fontSize: 18,
                     fontWeight: pw.FontWeight.bold,
+                    font: font,
                   ),
                 ),
               ),
               pw.SizedBox(height: 8),
               pw.Text(
                 _questionMarkdown.isNotEmpty
-                    ? _stripMarkdown(_questionMarkdown)
+                    ? _cleanLatexForPdf(_stripMarkdown(_questionMarkdown))
                     : '（题目识别为空）',
-                style: const pw.TextStyle(fontSize: 12),
+                style: pw.TextStyle(fontSize: 12, font: font),
               ),
               pw.SizedBox(height: 20),
               pw.Header(
@@ -350,17 +376,19 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
                   style: pw.TextStyle(
                     fontSize: 18,
                     fontWeight: pw.FontWeight.bold,
+                    font: font,
                   ),
                 ),
               ),
               pw.SizedBox(height: 8),
               pw.Text(
                 _solutionMarkdown.isNotEmpty
-                    ? _stripMarkdown(_solutionMarkdown)
+                    ? _cleanLatexForPdf(_stripMarkdown(_solutionMarkdown))
                     : '（解题阶段未返回内容）',
-                style: const pw.TextStyle(fontSize: 12),
+                style: pw.TextStyle(fontSize: 12, font: font),
               ),
-              if (_formulaPreview != null && _formulaPreview!.isNotEmpty) ...<pw.Widget>[
+              if (_formulaPreview != null &&
+                  _formulaPreview!.isNotEmpty) ...<pw.Widget>[
                 pw.SizedBox(height: 20),
                 pw.Header(
                   level: 1,
@@ -369,6 +397,7 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
                     style: pw.TextStyle(
                       fontSize: 18,
                       fontWeight: pw.FontWeight.bold,
+                      font: font,
                     ),
                   ),
                 ),
@@ -377,7 +406,7 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
                   padding: const pw.EdgeInsets.all(12),
                   child: pw.Text(
                     _cleanLatexForPdf(_formulaPreview!),
-                    style: const pw.TextStyle(fontSize: 14),
+                    style: pw.TextStyle(fontSize: 14, font: font),
                   ),
                 ),
               ],
@@ -415,11 +444,20 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
   }
 
   String _stripMarkdown(String text) {
+    // 先处理 $$...$$ 展示数学（整块移除前后$$，保留内容）
+    text = text.replaceAllMapped(
+      RegExp(r'\$\$([\s\S]*?)\$\$'),
+      (Match m) => m.group(1) ?? '',
+    );
+    // 再处理 $...$ 内联数学
+    text = text.replaceAllMapped(
+      RegExp(r'\$([^\$\n]+?)\$'),
+      (Match m) => m.group(1) ?? '',
+    );
     return text
         .replaceAll(RegExp(r'\*\*([^*]+)\*\*'), r'$1')
         .replaceAll(RegExp(r'\*([^*]+)\*'), r'$1')
         .replaceAll(RegExp(r'#{1,6}\s*'), '')
-        .replaceAll(RegExp(r'\$+\$?([\s\S]*?)\$+\$?'), r'$1')
         .replaceAll(RegExp(r'`([^`]+)`'), r'$1')
         .replaceAll(RegExp(r'```[\s\S]*?```'), '')
         .replaceAll(RegExp(r'!\[([^\]]*)\]\([^)]+\)'), '')
@@ -430,18 +468,147 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
   }
 
   String _cleanLatexForPdf(String latex) {
-    return latex
-        .replaceAll(r'\begin{cases}', '')
-        .replaceAll(r'\end{cases}', '')
-        .replaceAll(r'\begin{aligned}', '')
-        .replaceAll(r'\end{aligned}', '')
-        .replaceAll(r'\\', '\n')
-        .replaceAll(r'\ ', ' ')
-        .replaceAll(r'\{', '{')
-        .replaceAll(r'\}', '}')
+    // 先处理 \frac{}{}
+    latex = latex.replaceAllMapped(
+      RegExp(r'\\frac\{([^{}]*)\}\{([^{}]*)\}'),
+      (Match m) => '(${m.group(1)})/(${m.group(2)})',
+    );
+    // 处理 \sqrt{}{} 多层花括号
+    latex = latex.replaceAllMapped(
+      RegExp(r'\\sqrt\{([^{}]*)\}'),
+      (Match m) => '√(${m.group(1)})',
+    );
+    // 处理指数 ^ 和下标 _
+    latex = latex.replaceAllMapped(
+      RegExp(r'\^(\{[^{}]*\}|\S)'),
+      (Match m) {
+        final String exp = m.group(1) ?? '';
+        final String e = exp.startsWith('{') ? exp.substring(1, exp.length - 1) : exp;
+        return _toSuperscript(e);
+      },
+    );
+    latex = latex.replaceAllMapped(
+      RegExp(r'_\{(\S+?)\}'),
+      (Match m) => _toSubscript(m.group(1) ?? ''),
+    );
+    // \sqrt 带数字
+    latex = latex.replaceAllMapped(
+      RegExp(r'\\sqrt(\d)'),
+      (Match m) => '√${m.group(1)}',
+    );
+    latex = latex.replaceAll(r'\\times', '×')
+        .replaceAll(r'\\div', '÷')
+        .replaceAll(r'\\pm', '±')
+        .replaceAll(r'\\mp', '∓')
+        .replaceAll(r'\\leq', '≤')
+        .replaceAll(r'\\geq', '≥')
+        .replaceAll(r'\\neq', '≠')
+        .replaceAll(r'\\approx', '≈')
+        .replaceAll(r'\\equiv', '≡')
+        .replaceAll(r'\\infty', '∞')
+        .replaceAll(r'\\alpha', 'α')
+        .replaceAll(r'\\beta', 'β')
+        .replaceAll(r'\\gamma', 'γ')
+        .replaceAll(r'\\delta', 'δ')
+        .replaceAll(r'\\pi', 'π')
+        .replaceAll(r'\\theta', 'θ')
+        .replaceAll(r'\\lambda', 'λ')
+        .replaceAll(r'\\mu', 'μ')
+        .replaceAll(r'\\sigma', 'σ')
+        .replaceAll(r'\\phi', 'φ')
+        .replaceAll(r'\\psi', 'ψ')
+        .replaceAll(r'\\omega', 'ω')
+        .replaceAll(r'\\Delta', 'Δ')
+        .replaceAll(r'\\Sigma', 'Σ')
+        .replaceAll(r'\\Omega', 'Ω')
+        .replaceAll(r'\\Gamma', 'Γ')
+        .replaceAll(r'\\cdot', '·')
+        .replaceAll(r'\\ldots', '...')
+        .replaceAll(r'\\rightarrow', '→')
+        .replaceAll(r'\\leftarrow', '←')
+        .replaceAll(r'\\Rightarrow', '⇒')
+        .replaceAll(r'\\Leftarrow', '⇐')
+        .replaceAll(r'\\leftrightarrow', '↔')
+        .replaceAll(r'\\Leftrightarrow', '⇔')
+        .replaceAll(r'\\in', '∈')
+        .replaceAll(r'\\notin', '∉')
+        .replaceAll(r'\\subset', '⊂')
+        .replaceAll(r'\\subseteq', '⊆')
+        .replaceAll(r'\\cup', '∪')
+        .replaceAll(r'\\cap', '∩')
+        .replaceAll(r'\\forall', '∀')
+        .replaceAll(r'\\exists', '∃')
+        .replaceAll(r'\\partial', '∂')
+        .replaceAll(r'\\nabla', '∇')
+        .replaceAll(r'\\begin\{cases\}', '')
+        .replaceAll(r'\\end\{cases\}', '')
+        .replaceAll(r'\\begin\{aligned\}', '')
+        .replaceAll(r'\\end\{aligned\}', '')
+        .replaceAll(r'\\begin\{matrix\}', '')
+        .replaceAll(r'\\end\{matrix\}', '')
+        .replaceAll(r'\\begin\{bmatrix\}', '[')
+        .replaceAll(r'\\end\{bmatrix\}', ']')
+        .replaceAll(r'\\begin\{pmatrix\}', '(')
+        .replaceAll(r'\\end\{pmatrix\}', ')')
+        .replaceAll(r'\\begin\{vmatrix\}', '|')
+        .replaceAll(r'\\end\{vmatrix\}', '|')
+        .replaceAll(r'\\begin\{smallmatrix\}', '')
+        .replaceAll(r'\\end\{smallmatrix\}', '')
+        .replaceAll(r'\\left', '')
+        .replaceAll(r'\\right', '')
+        .replaceAll(r'\\ ', ' ')
+        .replaceAll(r'\\quad', '  ')
+        .replaceAll(r'\\qquad', '    ')
+        .replaceAll(r'\\\\', '\n')
+        .replaceAll(r'\\\{', '{')
+        .replaceAll(r'\\\}', '}')
+        .replaceAll(r'\{', '')
+        .replaceAll(r'\}', '')
         .replaceAll(r'\_', '_')
         .replaceAll(r'\^', '^')
+        .replaceAll(RegExp(r'\\text\{([^}]*)\}'), r'$1')
+        .replaceAll(RegExp(r'\\textbf\{([^}]*)\}'), r'$1')
+        .replaceAll(RegExp(r'\\textit\{([^}]*)\}'), r'$1')
+        .replaceAll(RegExp(r'\\mathsf\{([^}]*)\}'), r'$1')
+        .replaceAll(RegExp(r'\\mathrm\{([^}]*)\}'), r'$1')
+        .replaceAll(RegExp(r'\\mathbf\{([^}]*)\}'), r'$1')
+        .replaceAll(RegExp(r'\\mathit\{([^}]*)\}'), r'$1')
+        .replaceAll(r'\\_', '_')
+        .replaceAll(r'\\%', '%')
+        // SimHei 字体不支持 √ 符号，替换为 sqrt()
+        .replaceAll('√', 'sqrt(')
+        .replaceAllMapped(
+          RegExp(r'\\sqrt\{([^{}]*)\}'),
+          (Match m) => 'sqrt(${m.group(1)})',
+        )
+        .replaceAllMapped(
+          RegExp(r'sqrt\(([^)]+)\)\s*(\d)'),
+          (Match m) => 'sqrt(${m.group(1)})^${m.group(2)}',
+        )
         .trim();
+    return latex;
+  }
+
+  String _toSuperscript(String s) {
+    const Map<String, String> supMap = {
+      '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+      '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+      '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾',
+      'n': 'ⁿ', 'i': 'ⁱ',
+    };
+    return s.split('').map((c) => supMap[c] ?? c).join('');
+  }
+
+  String _toSubscript(String s) {
+    const Map<String, String> subMap = {
+      '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
+      '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+      '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎',
+      'a': 'ₐ', 'e': 'ₑ', 'o': 'ₒ', 'x': 'ₓ',
+      'i': 'ᵢ', 'j': 'ⱼ', 'n': 'ₙ', 'm': 'ₘ', 'r': 'ᵣ',
+      's': 'ₛ', 't': 'ₜ', 'u': 'ᵤ', 'v': 'ᵥ',
+    };
+    return s.split('').map((c) => subMap[c] ?? c).join('');
   }
 
   void _copyFormula() {
@@ -500,43 +667,75 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
               ? blocks.first
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: blocks
-                      .map((Widget w) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            child: w,
-                          ))
-                      .toList(),
+                  children: _mergeBlocksIntoLines(blocks),
                 ),
         ),
       ],
     );
   }
 
+  /// Merge blocks into lines: each "第 X 步" starts a new line, otherwise wrap inline.
+  List<Widget> _mergeBlocksIntoLines(List<Widget> blocks) {
+    final List<Widget> lines = <Widget>[];
+    List<Widget> currentLine = <Widget>[];
+
+    for (final Widget block in blocks) {
+      final String? label = _getStepLabel(block);
+      if (label != null) {
+        if (currentLine.isNotEmpty) {
+          lines.add(_buildLineWrap(currentLine));
+          currentLine = <Widget>[];
+        }
+        lines.add(SizedBox(height: 8));
+        currentLine.add(block);
+      } else {
+        currentLine.add(block);
+      }
+    }
+
+    if (currentLine.isNotEmpty) {
+      lines.add(_buildLineWrap(currentLine));
+    }
+
+    return lines;
+  }
+
+  String? _getStepLabel(Widget w) {
+    if (w is! Text) return null;
+    final String t = (w.data ?? '').trim();
+    if (RegExp(r'^第\s*[一二三四五六七八九十百\d]+\s*步').hasMatch(t)) {
+      return t;
+    }
+    return null;
+  }
+
+  Widget _buildLineWrap(List<Widget> children) {
+    return Wrap(
+      spacing: 4,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: children,
+    );
+  }
+
   List<Widget> _buildContentBlocks(String content) {
     final List<Widget> widgets = <Widget>[];
-    final RegExp displayMathRegex = RegExp(r'\$\$(.*?)\$\$', dotAll: true);
+    final RegExp displayMathRegex = RegExp(r'\$\$([\s\S]*?)\$\$');
 
     int lastEnd = 0;
     for (final RegExpMatch match in displayMathRegex.allMatches(content)) {
       if (match.start > lastEnd) {
-        final String textBefore = content.substring(lastEnd, match.start).trim();
+        final String textBefore = content
+            .substring(lastEnd, match.start)
+            .trim();
         if (textBefore.isNotEmpty) {
-          widgets.add(_buildMarkdownText(textBefore));
+          widgets.addAll(_buildInlineMathText(textBefore));
         }
       }
 
       final String latex = match.group(1)?.trim() ?? '';
       if (latex.isNotEmpty) {
-        try {
-          widgets.add(
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Center(child: Math.tex(latex, textStyle: const TextStyle(fontSize: 16))),
-            ),
-          );
-        } catch (e) {
-          widgets.add(Text(latex, style: const TextStyle(fontFamily: 'monospace')));
-        }
+        widgets.add(_buildMathWidget(latex, fontSize: 16));
       }
 
       lastEnd = match.end;
@@ -545,12 +744,99 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
     if (lastEnd < content.length) {
       final String textAfter = content.substring(lastEnd).trim();
       if (textAfter.isNotEmpty) {
-        widgets.add(_buildMarkdownText(textAfter));
+        widgets.addAll(_buildInlineMathText(textAfter));
       }
     }
 
     if (widgets.isEmpty) {
-      widgets.add(_buildMarkdownText(content));
+      widgets.addAll(_buildInlineMathText(content));
+    }
+
+    return widgets;
+  }
+
+  Widget _buildMathWidget(String latex, {double fontSize = 15}) {
+    // flutter_math_fork 遇到无效 LaTeX 会渲染黄色错误框而不是抛异常，
+    // 所以先做语法检查，无效时直接显示原文
+    if (!_isValidLatex(latex)) {
+      return Text(latex, style: TextStyle(fontSize: fontSize, fontFamily: 'monospace'));
+    }
+    try {
+      return Math.tex(latex, textStyle: TextStyle(fontSize: fontSize));
+    } catch (e) {
+      return Text(latex, style: TextStyle(fontSize: fontSize, fontFamily: 'monospace'));
+    }
+  }
+
+  bool _isValidLatex(String latex) {
+    // 检查花括号是否平衡
+    int braceCount = 0;
+    bool escaped = false;
+    for (int i = 0; i < latex.length; i++) {
+      final String c = latex[i];
+      if (c == '\\') {
+        escaped = true;
+        continue;
+      }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (c == '{') braceCount++;
+      if (c == '}') braceCount--;
+      if (braceCount < 0) return false;
+    }
+    if (braceCount != 0) return false;
+    // 检查方括号是否平衡（常见错误）
+    int bracketCount = 0;
+    escaped = false;
+    for (int i = 0; i < latex.length; i++) {
+      final String c = latex[i];
+      if (c == '\\') {
+        escaped = true;
+        continue;
+      }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (c == '[') bracketCount++;
+      if (c == ']') bracketCount--;
+    }
+    if (bracketCount != 0) return false;
+    return true;
+  }
+
+  List<Widget> _buildInlineMathText(String text) {
+    final List<Widget> widgets = <Widget>[];
+    final RegExp inlineMathRegex = RegExp(r'\$([^\$\n]+)\$');
+
+    int lastEnd = 0;
+    for (final RegExpMatch match in inlineMathRegex.allMatches(text)) {
+      if (match.start > lastEnd) {
+        final String textBefore = text.substring(lastEnd, match.start).trim();
+        if (textBefore.isNotEmpty) {
+          widgets.add(_buildMarkdownText(textBefore));
+        }
+      }
+
+      final String latex = match.group(1)?.trim() ?? '';
+      if (latex.isNotEmpty) {
+        widgets.add(_buildMathWidget(latex, fontSize: 15));
+      }
+
+      lastEnd = match.end;
+    }
+
+    if (lastEnd < text.length) {
+      final String textAfter = text.substring(lastEnd).trim();
+      if (textAfter.isNotEmpty) {
+        widgets.add(_buildMarkdownText(textAfter));
+      }
+    }
+
+    if (widgets.isEmpty && text.isNotEmpty) {
+      widgets.add(_buildMarkdownText(text));
     }
 
     return widgets;
@@ -560,9 +846,7 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
     return MarkdownBody(
       data: text,
       selectable: true,
-      styleSheet: MarkdownStyleSheet.fromTheme(
-        Theme.of(context),
-      ).copyWith(
+      styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
         p: const TextStyle(fontSize: 14, height: 1.45),
         h1: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
         h2: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -648,13 +932,13 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
                         const Center(child: CircularProgressIndicator())
                       else ...<Widget>[
                         _buildMarkdownBlock(
-                          title: '题目内容（OCR）',
+                          title: '题目内容',
                           content: _questionMarkdown,
                           emptyText: '题目识别为空',
                         ),
                         const SizedBox(height: 16),
                         _buildMarkdownBlock(
-                          title: '解答过程（Markdown）',
+                          title: '解答过程',
                           content: _solutionMarkdown,
                           emptyText: '解题阶段未返回内容',
                         ),
@@ -701,10 +985,16 @@ class _BeautifulResultPageState extends State<BeautifulResultPage> {
                                   ),
                                 );
                               },
-                              icon: const Icon(Icons.visibility_outlined),
-                              label: const Text('查看几何可视化'),
+                              icon: const Icon(
+                                Icons.visibility_outlined,
+                                color: Colors.black87,
+                              ),
+                              label: const Text(
+                                '查看几何可视化',
+                                style: TextStyle(color: Colors.black87),
+                              ),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF3F51B5),
+                                backgroundColor: const Color(0xFF90CAF9),
                               ),
                             ),
                           )
